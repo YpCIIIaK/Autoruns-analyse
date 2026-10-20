@@ -8,7 +8,7 @@ import sys
 import time
 import unittest
 from unittest.mock import patch
-from engine.core import parse_autoruns, analyze, command_evidence, pe_metadata, Store, validate_ai, AI_SCHEMA, ai_payload, local_path, external_analysis, explain, run_process
+from engine.core import parse_autoruns, analyze, command_evidence, pe_metadata, Store, validate_ai, AI_SCHEMA, ai_payload, local_path, external_analysis, explain, run_process, autorunsc_path, collect_autoruns
 
 class EngineTests(unittest.TestCase):
     def setUp(self):
@@ -78,5 +78,18 @@ class EngineTests(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             run_process([sys.executable,'-c',code],timeout=0.5)
         self.assertLess(time.monotonic()-start,16)
+    def test_autorunsc_rejects_renamed_executable(self):
+        wrong=self.root/'scanner.exe';wrong.write_bytes(b'MZ fixture')
+        with self.assertRaisesRegex(ValueError,'Autorunsc'):
+            autorunsc_path(str(wrong))
+    def test_autorunsc_collection_uses_fixed_read_only_arguments(self):
+        tool=self.root/'Autorunsc64.exe';tool.write_bytes(b'MZ fixture')
+        csv_data=b'"Entry","Image Path","Signer"\n"Fixture","C:\\\\Windows\\\\System32\\\\notepad.exe","Microsoft"\n'
+        completed=subprocess.CompletedProcess([],0,csv_data,b'')
+        with patch('engine.core.signature',return_value={'status':'Valid','subject':'CN=Microsoft Windows, O=Microsoft Corporation'}),patch('engine.core.run_process_bytes',return_value=completed) as process:
+            result=collect_autoruns(str(tool))
+        args=process.call_args.args[0]
+        self.assertEqual(args[1:],['-accepteula','-a','*','-c','-h','-s','-nobanner'])
+        self.assertEqual(result['count'],1)
 
 if __name__=='__main__':unittest.main()

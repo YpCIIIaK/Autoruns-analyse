@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": {
+      "../release-assets/autoruns-lens-engine.exe": "engine/autoruns-lens-engine.exe"
+    }
+  }
+}

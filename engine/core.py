@@ -21,6 +21,7 @@ VERSION = '0.1.0'
 MAX_FILE = 128 * 1024 * 1024
 MAX_CSV = 16 * 1024 * 1024
 LAUNCHERS = {'rundll32.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'cmd.exe', 'regsvr32.exe'}
+AUTORUNSC_NAMES = {'autorunsc.exe', 'autorunsc64.exe', 'autorunsc64a.exe'}
 
 
 def run_process(args, *, timeout=30, input_text=None, env=None, cwd=None):
@@ -49,6 +50,27 @@ def run_process(args, *, timeout=30, input_text=None, env=None, cwd=None):
         raise
 
 
+def run_process_bytes(args, *, timeout=30):
+    """Binary stdout variant for tools whose console encoding is not guaranteed."""
+    flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            creationflags=flags, start_new_session=os.name != 'nt')
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        if os.name == 'nt':
+            try:
+                subprocess.run(['taskkill.exe', '/PID', str(proc.pid), '/T', '/F'],
+                               capture_output=True, timeout=10, creationflags=flags)
+            except (OSError, subprocess.TimeoutExpired):
+                proc.kill()
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise
+
+
 def local_path(value):
     value = os.path.expandvars(value.strip().strip('"'))
     if value.startswith(('\\\\', '//', '\\??\\', '\\\\?\\')):
@@ -69,7 +91,12 @@ def parse_autoruns(path):
     p = local_path(path)
     if p.stat().st_size > MAX_CSV:
         raise ValueError('CSV больше 16 МБ.')
-    data = p.read_bytes()
+    return parse_autoruns_bytes(p.read_bytes())
+
+
+def parse_autoruns_bytes(data):
+    if len(data) > MAX_CSV:
+        raise ValueError('CSV больше 16 МБ.')
     if data.startswith((b'\xff\xfe', b'\xfe\xff')):
         content = data.decode('utf-16')
     else:
@@ -96,6 +123,56 @@ def parse_autoruns(path):
                      'signer': row.get('Signer', ''), 'category': row.get('Category', ''),
                      'vt': row.get('VT detection', row.get('VirusTotal', ''))})
     return rows
+
+
+def autorunsc_path(value=None):
+    """Resolve only the official Autorunsc executable name; never execute a path from CSV."""
+    candidates = []
+    if value:
+        candidates.append(local_path(value))
+    for name in ('Autorunsc64.exe', 'Autorunsc.exe', 'Autorunsc64a.exe'):
+        found = shutil.which(name)
+        if found:
+            candidates.append(Path(found))
+    if os.name == 'nt':
+        home = Path.home()
+        candidates += [Path(r'C:\Tools\Autoruns') / name for name in ('Autorunsc64.exe', 'Autorunsc.exe')]
+        candidates += [home / 'Downloads' / 'Autoruns' / name for name in ('Autorunsc64.exe', 'Autorunsc.exe')]
+    for candidate in candidates:
+        if candidate.name.lower() not in AUTORUNSC_NAMES:
+            if value:
+                raise ValueError('Выберите Autorunsc.exe или Autorunsc64.exe.')
+            continue
+        if candidate.is_file():
+            return candidate.resolve()
+    if value:
+        raise ValueError('Autorunsc не найден по указанному пути.')
+    return None
+
+
+def collect_autoruns(executable=None):
+    """Collect a read-only CSV snapshot with fixed arguments and parse it locally."""
+    tool = autorunsc_path(executable)
+    if tool is None:
+        raise ValueError('Autorunsc не найден. Скачайте Sysinternals Autoruns и укажите Autorunsc64.exe.')
+    trust = signature(tool)
+    subject = trust.get('subject') or ''
+    if trust.get('status') != 'Valid' or 'Microsoft Corporation' not in subject:
+        raise ValueError('Autorunsc не запущен: цифровая подпись Microsoft не подтверждена.')
+    # -accepteula avoids a hidden first-run dialog; no flags that modify autorun entries are used.
+    args = [str(tool), '-accepteula', '-a', '*', '-c', '-h', '-s', '-nobanner']
+    try:
+        proc = run_process_bytes(args, timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError('Autorunsc не завершил сбор отчёта за 120 секунд.') from exc
+    if proc.returncode:
+        detail = (proc.stderr or proc.stdout)[-1200:].decode('utf-8', errors='replace')
+        raise ValueError('Autorunsc завершился с ошибкой: ' + detail)
+    raw = proc.stdout
+    if len(raw) > MAX_CSV:
+        raise ValueError('Отчёт Autorunsc больше 16 МБ.')
+    rows = parse_autoruns_bytes(raw)
+    return {'entries': rows, 'tool': str(tool), 'count': len(rows), 'arguments': '-a * -c -h -s -nobanner'}
 
 
 def command_evidence(entry):
@@ -178,6 +255,8 @@ def tool_status():
               for name, binary in [('capa', 'capa'), ('floss', 'floss'), ('die', 'diec'), ('yara_x', 'yr')]}
     codex = codex_command()
     result['codex'] = {'available': bool(codex), 'path': ' '.join(codex) if codex else None}
+    autorunsc = autorunsc_path()
+    result['autorunsc'] = {'available': bool(autorunsc), 'path': str(autorunsc) if autorunsc else None}
     return result
 
 
@@ -368,6 +447,8 @@ def dispatch(request, store):
         return {'tools': tool_status(), 'codex': codex_status(), 'version': VERSION}
     if action == 'import':
         return parse_autoruns(request['path'])
+    if action == 'collect_autoruns':
+        return collect_autoruns(request.get('path'))
     if action == 'analyze':
         return store.save(analyze(request['path'], request.get('entry'), request.get('external', False)))
     if action == 'history':

@@ -6,7 +6,7 @@ use serde_json::Value;
 
 #[tauri::command]
 async fn engine(app: tauri::AppHandle, request: Value) -> Result<Value, String> {
-    let allowed = ["status", "import", "analyze", "history", "preview_ai", "explain"];
+    let allowed = ["status", "import", "collect_autoruns", "analyze", "history", "preview_ai", "explain"];
     if !allowed.contains(&request["action"].as_str().unwrap_or("")) {
         return Err("Неизвестное действие".into());
     }
@@ -14,11 +14,15 @@ async fn engine(app: tauri::AppHandle, request: Value) -> Result<Value, String> 
         let data = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&data).map_err(|e| e.to_string())?;
         let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../engine/cli.py");
-        let script = if cfg!(debug_assertions) && dev.is_file() { dev } else {
-            app.path().resource_dir().map_err(|e| e.to_string())?.join("engine/cli.py")
+        let bundled = app.path().resource_dir().map_err(|e| e.to_string())?.join("engine/autoruns-lens-engine.exe");
+        let mut command = if bundled.is_file() {
+            Command::new(&bundled)
+        } else {
+            let mut python = Command::new("python");
+            python.arg(&dev);
+            python
         };
-        let mut command = Command::new("python");
-        command.arg(&script).arg("--data-dir").arg(&data)
+        command.arg("--data-dir").arg(&data)
             .env("PYTHONIOENCODING", "utf-8")
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         #[cfg(windows)] {

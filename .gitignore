@@ -6,5 +6,7 @@ __pycache__/
 *.pyc
 .venv/
 work/
+build/
+release-assets/
 *.db
 *.db-*
