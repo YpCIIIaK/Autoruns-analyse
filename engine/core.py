@@ -22,6 +22,7 @@ MAX_FILE = 128 * 1024 * 1024
 MAX_CSV = 16 * 1024 * 1024
 LAUNCHERS = {'rundll32.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'cmd.exe', 'regsvr32.exe'}
 AUTORUNSC_NAMES = {'autorunsc.exe', 'autorunsc64.exe', 'autorunsc64a.exe'}
+SYSTEM_NAMES = {'svchost.exe', 'services.exe', 'lsass.exe', 'winlogon.exe', 'explorer.exe', 'csrss.exe', 'smss.exe'}
 
 
 def run_process(args, *, timeout=30, input_text=None, env=None, cwd=None):
@@ -117,12 +118,47 @@ def parse_autoruns_bytes(data):
             raise ValueError('Превышен лимит 10 000 записей.')
         if not any(row.values()):
             continue
-        rows.append({'id': str(uuid.uuid4()), 'name': row.get('Entry', ''),
-                     'path': row.get('Image Path', ''), 'command': row.get('Launch String', ''),
-                     'location': row.get('Entry Location', row.get('Location', '')),
-                     'signer': row.get('Signer', ''), 'category': row.get('Category', ''),
-                     'vt': row.get('VT detection', row.get('VirusTotal', ''))})
+        entry = {'id': str(uuid.uuid4()), 'name': row.get('Entry', ''),
+                 'path': row.get('Image Path', ''), 'command': row.get('Launch String', ''),
+                 'location': row.get('Entry Location', row.get('Location', '')),
+                 'signer': row.get('Signer', ''), 'category': row.get('Category', ''),
+                 'vt': row.get('VT detection', row.get('VirusTotal', ''))}
+        entry.update(triage_entry(entry))
+        rows.append(entry)
     return rows
+
+
+def triage_entry(entry):
+    """Prioritize review using explicit evidence; this is not a malware verdict."""
+    path = entry.get('path', '').strip().strip('"')
+    command = entry.get('command', '')
+    signer = entry.get('signer', '').lower()
+    vt = entry.get('vt', '').strip()
+    if not path:
+        return {'risk': 'context', 'risk_reasons': []}
+    reasons = []
+    high = False
+    match = re.search(r'(?<!\d)(\d+)\s*/\s*\d+', vt)
+    if match and int(match.group(1)) > 0:
+        high = True
+        reasons.append(f'VirusTotal: {match.group(1)} детектов')
+    if re.search(r'(?i)(?:^|\s)-(?:enc|encodedcommand|e)\s+', command):
+        high = True
+        reasons.append('Кодированный аргумент командной строки')
+    if not signer or 'not verified' in signer or 'не проверено' in signer:
+        reasons.append('Подпись не подтверждена в отчёте')
+    normalized = path.replace('/', '\\').lower()
+    if re.search(r'(?i)\\(?:temp|downloads)\\', normalized):
+        reasons.append('Запуск из Temp или Downloads')
+    elif '\\appdata\\' in normalized:
+        reasons.append('Запуск из AppData')
+    name = PureWindowsPath(path).name.lower()
+    if name in LAUNCHERS:
+        reasons.append('Системный загрузчик требует проверки аргументов')
+    if name in SYSTEM_NAMES and not (normalized.startswith('c:\\windows\\system32\\') or normalized == 'c:\\windows\\explorer.exe'):
+        high = True
+        reasons.append('Системное имя используется вне штатного пути Windows')
+    return {'risk': 'high' if high else ('review' if reasons else 'low'), 'risk_reasons': reasons}
 
 
 def autorunsc_path(value=None):

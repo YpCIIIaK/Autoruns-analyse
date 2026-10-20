@@ -1,4 +1,4 @@
-export type Entry = {id:string;name:string;path:string;command:string;location:string;signer:string;category:string;vt:string};
+export type Entry = {id:string;name:string;path:string;command:string;location:string;signer:string;category:string;vt:string;risk:'high'|'review'|'low'|'context';risk_reasons:string[]};
 export type Finding = {id:string;title:string;severity:string;source:string;version:string|null;evidence:string};
 export type Analysis = {tool:string;status:string;detail?:string;version?:string;data?:unknown};
 export type AI = {verdict:string;summary:string;reasons:{evidence_id:string;explanation:string}[];limitations:string[];next_steps:string[];provider:string};

@@ -8,7 +8,7 @@ import sys
 import time
 import unittest
 from unittest.mock import patch
-from engine.core import parse_autoruns, analyze, command_evidence, pe_metadata, Store, validate_ai, AI_SCHEMA, ai_payload, local_path, external_analysis, explain, run_process, autorunsc_path, collect_autoruns
+from engine.core import parse_autoruns, analyze, command_evidence, pe_metadata, Store, validate_ai, AI_SCHEMA, ai_payload, local_path, external_analysis, explain, run_process, autorunsc_path, collect_autoruns, triage_entry
 
 class EngineTests(unittest.TestCase):
     def setUp(self):
@@ -91,5 +91,14 @@ class EngineTests(unittest.TestCase):
         args=process.call_args.args[0]
         self.assertEqual(args[1:],['-accepteula','-a','*','-c','-h','-s','-nobanner'])
         self.assertEqual(result['count'],1)
+    def test_triage_prioritizes_vt_and_system_name_mismatch(self):
+        vt=triage_entry({'path':r'C:\Tools\sample.exe','signer':'Verified','vt':'2/72','command':''})
+        self.assertEqual(vt['risk'],'high')
+        mimic=triage_entry({'path':r'C:\Users\User\svchost.exe','signer':'Verified','vt':'0/72','command':''})
+        self.assertEqual(mimic['risk'],'high')
+        self.assertTrue(any('штатного пути' in reason for reason in mimic['risk_reasons']))
+    def test_triage_keeps_verified_system_file_low(self):
+        result=triage_entry({'path':r'C:\Windows\System32\svchost.exe','signer':'(Verified) Microsoft Windows','vt':'0/72','command':''})
+        self.assertEqual(result,{'risk':'low','risk_reasons':[]})
 
 if __name__=='__main__':unittest.main()
