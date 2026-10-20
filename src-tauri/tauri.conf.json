@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Autoruns Lens",
+  "version": "0.1.0",
+  "identifier": "local.autoruns.lens",
+  "build": {"beforeDevCommand":"npm run dev","devUrl":"http://localhost:1420","beforeBuildCommand":"npm run build","frontendDist":"../dist"},
+  "app": {"windows":[{"title":"Autoruns Lens","width":1280,"height":840,"minWidth":900,"minHeight":620}],"security":{"csp":"default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; frame-src 'none'"}},
+  "bundle": {"active":false,"icon":["icons/icon.ico","icons/icon.png"],"resources":{"../engine/__init__.py":"engine/__init__.py","../engine/core.py":"engine/core.py","../engine/cli.py":"engine/cli.py"}}
+}

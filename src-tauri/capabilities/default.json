@@ -1,0 +1,1 @@
+{"identifier":"default","description":"Local file picker and Tauri core","windows":["main"],"permissions":["core:default","dialog:allow-open"]}
